@@ -1,0 +1,28 @@
+REQUIREMENTS 
+
+A quick way to send a support request directly from the Salesforce Home Page.
+
+Develop a Lightning Web Component (LWC) that allows users to input the following information:
+- Last Name
+- First Name (Required)
+- Email Address (Required)
+- Incident Description (Required)
+
+Functionality:
+- after submitting the form, the application must verify if a client already exists in the org based on the email address, searching either in the Account object or a custom object created by you
+- a relationship must exist between the Account/custom object and the Case object
+- Search Logic Attention: The custom object must have priority; the Account will be used only as a fallback mechanism. The identification logic must be as accurate as possible, depending on the data completed in the form.
+Example 1: If Last Name, First Name, and Email are completed, the search should attempt to identify the record based on all 3 fields.
+Example 2: If only the First Name and Email are completed, the search should first try to identify based on both fields; if no result is found, it should then try identifying based on the Email address alone.
+
+Record Processing:
+If the record exists, the component checks if there is an associated Case.
+If a Case does not exist, it must be created automatically using the data entered in the LWC:
+     Subject → User Name + Email Address
+     Description → The description entered by the user
+Other fields can be filled automatically in the background.
+
+Post-Processing:
+If the user exists in the org, send Email Template 1.
+If the user does not exist, send Email Template 2.
+After sending the email, the component must display a confirmation message in the interface.
