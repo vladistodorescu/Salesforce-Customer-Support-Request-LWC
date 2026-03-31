@@ -1,28 +1,95 @@
-REQUIREMENTS 
+REQUIREMENTS
+We want to implement a Customer Support Request system for Cases in our Org, which uses the following: a LWC and APEX.
 
-A quick way to send a support request directly from the Salesforce Home Page.
+The purpose of the exercise is building a self-service support intake form, which:
+   - collects customer details (first name, last name, email, incident description)
+   - matches the submitter against existing Client__c and Contact records
+   - creates a Case if no open request exists
+   - sends contextual confirmation emails based on the outcome
+   - handles edge cases such as duplicate records or no match found
 
-Develop a Lightning Web Component (LWC) that allows users to input the following information:
-- Last Name
-- First Name (Required)
-- Email Address (Required)
-- Incident Description (Required)
+1. DATA MODEL
+We use the following existing objects and fields:
 
-Functionality:
-- after submitting the form, the application must verify if a client already exists in the org based on the email address, searching either in the Account object or a custom object created by you
-- a relationship must exist between the Account/custom object and the Case object
-- Search Logic Attention: The custom object must have priority; the Account will be used only as a fallback mechanism. The identification logic must be as accurate as possible, depending on the data completed in the form.
-Example 1: If Last Name, First Name, and Email are completed, the search should attempt to identify the record based on all 3 fields.
-Example 2: If only the First Name and Email are completed, the search should first try to identify based on both fields; if no result is found, it should then try identifying based on the Email address alone.
+Standard Object - Case:
+   - Subject (Text)
+   - Status (Picklist)
+   - Origin (Picklist)
+   - Description (Text)
+   - SuppliedName (Text)
+   - SuppliedEmail (Text)
 
-Record Processing:
-If the record exists, the component checks if there is an associated Case.
-If a Case does not exist, it must be created automatically using the data entered in the LWC:
-     Subject → User Name + Email Address
-     Description → The description entered by the user
-Other fields can be filled automatically in the background.
+Custom Object - Client__c:
+   - Name (Text)
+   - Email_Address__c (Email)
+   - Related_Case__c (Lookup to Case)
+   - Related_Contact__c (Lookup to Contact)
 
-Post-Processing:
-If the user exists in the org, send Email Template 1.
-If the user does not exist, send Email Template 2.
-After sending the email, the component must display a confirmation message in the interface.
+Standard Object - Contact:
+   - FirstName (Text)
+   - LastName (Text)
+   - Email (Email)
+   - Related_Case__c (Lookup to Case)
+
+We also need the following Email Templates:
+
+- Client_Not_Found_1774354497558
+   Sent to the raw email address when no matching Client or Contact record is found.
+
+- Client_Found_Customer_Support_Request_Already_In_Process_1774353180578
+   Sent to the matched Contact when an open Case already exists for the customer.
+
+- Client_Found_1774350650634
+   Sent to the matched Contact when a new Case is successfully created.
+
+IMPLEMENTATION
+
+We start with the Apex Controller (CustomerSupportRequesterController). The controller exposes a single @AuraEnabled method, processCustomerSupportRequest, which accepts a wrapper object containing the form data (firstName, lastName, email, description) and returns a String status code ('CREATED', 'ALREADY_OPEN', or 'NOT_FOUND').
+
+The matching logic follows this order of priority:
+
+   1. If Last Name is provided:
+      - Search Client__c by full name (lastName + ' ' + firstName) and email.
+      - If a single Client match is found:
+           a. No related Case --> create a new Case, relate it to the Client, ensure a Contact exists (create one if not), and send the confirmation email. Return 'CREATED'.
+           b. Related Case exists --> ensure a Contact exists, send the "already open" email. Return 'ALREADY_OPEN'.
+      - If no Client match is found, fall back to Contact:
+           - Search Contact by firstName and email.
+           - Single match, no Case --> create Case, relate to Contact, send confirmation email. Return 'CREATED'.
+           - Single match, Case exists --> send "already open" email. Return 'ALREADY_OPEN'.
+           - No match --> send guest "not found" email. Return 'NOT_FOUND'.
+           - Multiple matches --> throw AuraHandledException.
+
+   2. If Last Name is not provided:
+      - Search Client__c using a LIKE query on firstName and exact email.
+      - If a single match is found, follow the same Case creation / already open logic as above.
+      - If no match, retry searching Client__c by email only.
+      - If still no match, fall back to Contact search (firstName, lastName, email).
+      - If no Contact match found either --> send guest "not found" email. Return 'NOT_FOUND'.
+      - Multiple matches at any point --> throw AuraHandledException.
+
+Helper methods used by the controller:
+   - createNewCaseAndRelateToClient(Client__c, String description) --> inserts Case, updates Client with Related_Case__c, returns Case Id.
+   - createNewCaseAndRelateToContact(Contact, String description) --> inserts Case, updates Contact with Related_Case__c, returns Case Id.
+   - createContactForClient(String firstName, String lastName, String email) --> inserts Contact, returns Contact Id.
+   - sendEmailSupportRequestCreated(Id recipientId, Id caseId) --> sends templated email using setTargetObjectId + setWhatId.
+   - sendEmailSupportRequestAlreadyOpen(Id recipientId, Id caseId) --> sends templated email using setTargetObjectId + setWhatId.
+   - sendGuestEmailNoMatchFound(String recipientEmail) --> sends plain templated email directly to the raw email address.
+
+After having the Apex logic in place, we build the LWC (CustomerSupportRequester).
+
+The component starts in a landing state, showing a brief description and a "Start Customer Support Request" button. Once clicked, the form becomes visible with the following fields:
+   - Last Name (optional)
+   - First Name (required)
+   - Email (required)
+   - Incident Description (required)
+
+On submit, the LWC validates that all required fields are filled, builds the wrapper object, and calls the Apex method. Based on the returned status code:
+   - 'CREATED' --> shows a green success toast.
+   - 'ALREADY_OPEN' --> shows a red error toast informing the user of the duplicate.
+   - 'NOT_FOUND' --> shows a red error toast informing the user no match was found.
+   - Apex exception --> shows a red error toast with the exception message.
+
+After any outcome, the form resets to its initial landing state (all fields cleared, isStarted = false).
+
+All Apex methods are tested in CustomerSupportRequesterControllerTest and have over 80% code coverage.
