@@ -1,3 +1,4 @@
+// CustomerSupportRequesterController.cls
 public with sharing class CustomerSupportRequesterController {
     public class CustomerSupportRequestWrapper{
         @AuraEnabled public String lastName {get; set;} // ' {get; set;}' after the definition of wrapper class, creates stock getters and setters, since no special processing needed
@@ -10,7 +11,7 @@ public with sharing class CustomerSupportRequesterController {
     public static String processCustomerSupportRequest(CustomerSupportRequestWrapper wrapper){
         // we have Last Name (all others required) 
         if (wrapper.lastName != null){
-            String fullName = wrapper.lastName + ' ' + wrapper.firstName;
+            String fullName = wrapper.firstName + ' ' + wrapper.lastName;
 
             List<Client__c> searchedClients = [SELECT Id, Name, Email_Address__c, Related_Case__c, Related_Contact__c
                                                 FROM Client__c 
@@ -24,9 +25,8 @@ public with sharing class CustomerSupportRequesterController {
                     // create Case and store ID for sending Email
                     Id relatedCaseId = CustomerSupportRequesterController.createNewCaseAndRelateToClient(searchedClients[0], wrapper.description);
                     // we need a Contact in order to send an Email with according Case data
-                    // so that if the matching Client doesn't have a Contact related, we create one and relate it
                     if (searchedClients[0].Related_Contact__c == null){
-                        searchedClients[0].Related_Contact__c = CustomerSupportRequesterController.createContactForClient(wrapper.firstName, wrapper.lastName, wrapper.email);
+                        searchedClients[0].Related_Contact__c = CustomerSupportRequesterController.createContactForClient(wrapper.firstName, wrapper.lastName, wrapper.email, relatedCaseId);
                         update searchedClients[0];
                     }
                     // in the end we send email
@@ -36,7 +36,7 @@ public with sharing class CustomerSupportRequesterController {
                 // Client has Case related, check for Contact and create if not existent, then send email that customer request already open
                 else {
                     if (searchedClients[0].Related_Contact__c == null){
-                        searchedClients[0].Related_Contact__c = CustomerSupportRequesterController.createContactForClient(wrapper.firstName, wrapper.lastName, wrapper.email);
+                        searchedClients[0].Related_Contact__c = CustomerSupportRequesterController.createContactForClient(wrapper.firstName, wrapper.lastName, wrapper.email, searchedClients[0].Related_Case__c);
                         update searchedClients[0];
                     }
                     CustomerSupportRequesterController.sendEmailSupportRequestAlreadyOpen(searchedClients[0].Related_Contact__c, searchedClients[0].Related_Case__c);
@@ -80,23 +80,31 @@ public with sharing class CustomerSupportRequesterController {
 
         if (wrapper.lastName == null){
             String searchName = wrapper.firstName + '%';
-            String placeholderLastName = 'Unknown';
 
             List<Client__c> searchedClients = [SELECT Id, Name, Email_Address__c, Related_Case__c, Related_Contact__c
-                                            FROM Client__c 
-                                            WHERE Name LIKE :searchName
-                                            AND Email_Address__c = :wrapper.email];
+                                               FROM Client__c 
+                                               WHERE Name LIKE :searchName
+                                               AND Email_Address__c = :wrapper.email];
 
 
             // perfect match with Client, check for Case
             if (searchedClients.size() == 1){
+                // get the Full Name from the Client record
+                String clientFullName = searchedClients[0].Name;
+                String extractedLastName = 'Unknown'; // Fallback
+
+                // extract the last part of the name
+                if (clientFullName.contains(' ')) {
+                    extractedLastName = clientFullName.substringAfterLast(' ');
+                }
+
                 // if no Case related, create from wrapper data and relate to Client
                 if (searchedClients[0].Related_Case__c == null){
                     Id relatedCaseId = CustomerSupportRequesterController.createNewCaseAndRelateToClient(searchedClients[0], wrapper.description);
                     // we need a Contact in order to send an Email with according Case data
                     // so that if the matching Client doesn't have a Contact related, we create one and relate it
                     if (searchedClients[0].Related_Contact__c == null){
-                        searchedClients[0].Related_Contact__c = CustomerSupportRequesterController.createContactForClient(wrapper.firstName, wrapper.lastName, wrapper.email);
+                        searchedClients[0].Related_Contact__c = CustomerSupportRequesterController.createContactForClient(wrapper.firstName, extractedLastName, wrapper.email, relatedCaseId);
                         update searchedClients[0];
                     }
                     // in the end we send email
@@ -106,7 +114,7 @@ public with sharing class CustomerSupportRequesterController {
                 // if Case already related check for Contact and create if not existent, then send email that customer request already open
                 else {
                     if (searchedClients[0].Related_Contact__c == null){
-                        searchedClients[0].Related_Contact__c = CustomerSupportRequesterController.createContactForClient(wrapper.firstName, placeholderLastName, wrapper.email);
+                        searchedClients[0].Related_Contact__c = CustomerSupportRequesterController.createContactForClient(wrapper.firstName, extractedLastName, wrapper.email, searchedClients[0].Related_Case__c);
                         update searchedClients[0];
                     }
                     CustomerSupportRequesterController.sendEmailSupportRequestAlreadyOpen(searchedClients[0].Related_Contact__c, searchedClients[0].Related_Case__c);
@@ -121,13 +129,20 @@ public with sharing class CustomerSupportRequesterController {
                                                             WHERE Email_Address__c = :wrapper.email];
                 // if perfect match found by email only, check for Case
                 if (searchedClientsEmailOnly.size() == 1){
+                    String clientFullName = searchedClientsEmailOnly[0].Name;
+                    String extractedLastName = 'Unknown'; // Fallback
+
+                    // extract the last part of the name
+                    if (clientFullName.contains(' ')) {
+                        extractedLastName = clientFullName.substringAfterLast(' ');
+                    }
                     // create if not existing
                     if (searchedClientsEmailOnly[0].Related_Case__c == null){
                         Id relatedCaseId = CustomerSupportRequesterController.createNewCaseAndRelateToClient(searchedClientsEmailOnly[0], wrapper.description);
                         // we need a Contact in order to send an Email with according Case data
                         // so that if the matching Client doesn't have a Contact related, we create one and relate it
                         if (searchedClientsEmailOnly[0].Related_Contact__c == null){
-                            searchedClientsEmailOnly[0].Related_Contact__c = CustomerSupportRequesterController.createContactForClient(wrapper.firstName, wrapper.lastName, wrapper.email);
+                            searchedClientsEmailOnly[0].Related_Contact__c = CustomerSupportRequesterController.createContactForClient(wrapper.firstName, extractedLastName, wrapper.email, relatedCaseId);
                             update searchedClientsEmailOnly[0];
                         }
                         // in the end we send email
@@ -136,7 +151,7 @@ public with sharing class CustomerSupportRequesterController {
                     }
                     else {
                         if (searchedClientsEmailOnly[0].Related_Contact__c == null){
-                            searchedClientsEmailOnly[0].Related_Contact__c = CustomerSupportRequesterController.createContactForClient(wrapper.firstName, placeholderLastName, wrapper.email);
+                            searchedClientsEmailOnly[0].Related_Contact__c = CustomerSupportRequesterController.createContactForClient(wrapper.firstName, extractedLastName, wrapper.email, searchedClientsEmailOnly[0].Related_Case__c);
                             update searchedClientsEmailOnly[0];
                         }
                         CustomerSupportRequesterController.sendEmailSupportRequestAlreadyOpen(searchedClientsEmailOnly[0].Related_Contact__c, searchedClientsEmailOnly[0].Related_Case__c);
@@ -146,10 +161,9 @@ public with sharing class CustomerSupportRequesterController {
 
                 if (searchedClientsEmailOnly.size() == 0){
                     // fallback to Contacts (has Email field)
-                    List<Contact> searchedContacts = [SELECT Id, FirstName, LastName, Related_Case__c
+                    List<Contact> searchedContacts = [SELECT Id, FirstName, LastName, Email, Related_Case__c
                                                     FROM Contact
                                                     WHERE FirstName =: wrapper.firstName
-                                                    AND LastName =: wrapper.lastName
                                                     AND Email =: wrapper.email];
             
                     // Contact perfect match found, check for related Case
@@ -158,6 +172,7 @@ public with sharing class CustomerSupportRequesterController {
                         if (searchedContacts[0].Related_Case__c == null){
                             Id relatedCaseId = CustomerSupportRequesterController.createNewCaseAndRelateToContact(searchedContacts[0], wrapper.description);
                             CustomerSupportRequesterController.sendEmailSupportRequestCreated(searchedContacts[0].Id, relatedCaseId);
+                            return 'CREATED';
                         }
                         // if Case already related, throw error
                         else {
@@ -282,11 +297,12 @@ public with sharing class CustomerSupportRequesterController {
         Messaging.sendEmail(new Messaging.SingleEmailMessage[] { mail });
     }
 
-    public static Id createContactForClient(String firstName, String lastName, String email){
+    public static Id createContactForClient(String firstName, String lastName, String email, Id relatedCaseId){
         Contact newContact = new Contact(
             FirstName = firstName, 
             LastName = lastName,
-            Email = email);
+            Email = email,
+            Related_Case__c = relatedCaseId);
 
         insert newContact;
 
